@@ -1,3 +1,13 @@
+#!/bin/bash
+
+# Verifica se as variáveis de ambiente necessárias estão definidas
+if [ -z "$DOCKER_USER" ] || [ -z "$GITLAB_HOST" ]; then
+    echo "Por favor, defina as variáveis de ambiente necessárias:"
+    echo "export DOCKER_USER=seu-usuario-dockerhub"
+    echo "export GITLAB_HOST=seu-ip-ou-dominio"
+    exit 1
+fi
+
 init_gitlab() {
     # Cria diretórios necessários
     mkdir -p gitlab/{config,logs,data,gitlab-runner}
@@ -9,7 +19,6 @@ init_gitlab() {
     # Cria docker-compose.yml com mapeamentos de volume
     cat > docker-compose.yml << EOL
 version: '3.7'
-
 services:
   gitlab:
     image: '$DOCKER_USER/gitlab-custom:latest'
@@ -37,31 +46,46 @@ services:
     networks:
       - gitlab-network
 
-  gitlab-runner:
-    image: '$DOCKER_USER/gitlab-runner-custom:latest'
-    container_name: gitlab-runner
-    restart: always
-    volumes:
-      - './gitlab/gitlab-runner:/etc/gitlab-runner'
-      - '/var/run/docker.sock:/var/run/docker.sock'
-    networks:
-      - gitlab-network
-    depends_on:
-      - gitlab
+  # Runner comentado inicialmente para primeira execução
+  #gitlab-runner:
+  #  image: '$DOCKER_USER/gitlab-runner-custom:latest'
+  #  container_name: gitlab-runner
+  #  restart: always
+  #  volumes:
+  #    - './gitlab/gitlab-runner:/etc/gitlab-runner'
+  #    - '/var/run/docker.sock:/var/run/docker.sock'
+  #  networks:
+  #    - gitlab-network
+  #  depends_on:
+  #    - gitlab
 
 networks:
   gitlab-network:
     name: gitlab-network
 EOL
 
-    # Inicia serviços
-    docker compose up -d
+    # Inicia apenas o GitLab
+    echo "Iniciando o GitLab..."
+    docker compose up -d gitlab
     
-    # Aguarda at  o GitLab estar pronto
+    # Aguarda até o GitLab estar pronto
     echo "Aguardando o GitLab iniciar..."
     until curl -s http://localhost/-/health > /dev/null; do
-        sleep 10
+        echo "Ainda inicializando... (aguarde, isso pode levar alguns minutos)"
+        sleep 30
     done
     
     echo "O GitLab está pronto!"
+    echo "Senha inicial do root:"
+    sudo cat gitlab/config/initial_root_password
+    echo -e "\nPróximos passos:"
+    echo "1. Acesse http://$GITLAB_HOST"
+    echo "2. Faça login como root com a senha acima"
+    echo "3. Vá em Admin Area > CI/CD > Runners e copie o token de registro"
+    echo "4. Descomente a seção do gitlab-runner no docker-compose.yml"
+    echo "5. Execute: docker compose up -d gitlab-runner"
+    echo "6. Execute: docker compose exec gitlab-runner gitlab-runner register"
 }
+
+# Executa a função
+init_gitlab
