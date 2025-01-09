@@ -70,6 +70,10 @@ EOL
   # Aguarda até o GitLab estar pronto
   echo "Aguardando o GitLab iniciar..."
   until curl -s http://$GITLAB_HOST/-/health >/dev/null; do
+    if [ "$(curl -s -o /dev/null -w '%{http_code}' http://$GITLAB_HOST/-/health)" != "200" ]; then
+      echo "Erro ao conectar ao GitLab. Verifique se o serviço está rodando corretamente."
+      break
+    fi
     echo "Ainda inicializando... (aguarde, isso pode levar alguns minutos)"
     sleep 30
   done
