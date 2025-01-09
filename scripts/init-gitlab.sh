@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # Verifica se as variáveis de ambiente necessárias estão definidas
 if [ -z "$DOCKER_USER" ] || [ -z "$GITLAB_HOST" ]; then
     echo "Por favor, defina as variáveis de ambiente necessárias:"
@@ -14,11 +12,11 @@ init_gitlab() {
     
     # Baixa imagens customizadas
     docker pull $DOCKER_USER/gitlab-custom:latest
-    docker pull $DOCKER_USER/gitlab-runner-custom:latest
+    # docker pull $DOCKER_USER/gitlab-runner-custom:latest
     
     # Cria docker-compose.yml com mapeamentos de volume
     cat > docker-compose.yml << EOL
-version: '3.7'
+version: '3'
 services:
   gitlab:
     image: '$DOCKER_USER/gitlab-custom:latest'
@@ -35,7 +33,7 @@ services:
     shm_size: '256m'
     environment:
       GITLAB_OMNIBUS_CONFIG: |
-        external_url 'http://\${GITLAB_HOST}'
+        external_url 'http://$GITLAB_HOST'
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
         postgresql['shared_buffers'] = "256MB"
         unicorn['worker_processes'] = 2
@@ -70,10 +68,21 @@ EOL
     
     # Aguarda até o GitLab estar pronto
     echo "Aguardando o GitLab iniciar..."
-    until curl -s http://localhost/-/health > /dev/null; do
+    attempts=0
+    max_attempts=2
+    while [ $attempts -lt $max_attempts ]; do
+        if curl -s http://$GITLAB_HOST/-/health > /dev/null; then
+            echo "GitLab inicializado com sucesso!"
+            break
+        fi
+        attempts=$((attempts + 1))
         echo "Ainda inicializando... (aguarde, isso pode levar alguns minutos)"
-        sleep 30
+        sleep 10
     done
+
+    if [ $attempts -eq $max_attempts ]; then
+        echo "Erro: GitLab não foi inicializado após várias tentativas."
+    fi
     
     echo "O GitLab está pronto!"
     echo "Senha inicial do root:"

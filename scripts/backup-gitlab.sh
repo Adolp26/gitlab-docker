@@ -21,3 +21,5 @@ backup_gitlab() {
     echo "Logs: gitlab_logs_${timestamp}.tar.gz" >> "${backup_dir}/manifest_${timestamp}.txt"
     echo "Runner: gitlab_runner_${timestamp}.tar.gz" >> "${backup_dir}/manifest_${timestamp}.txt"
 }
+
+backup_gitlab

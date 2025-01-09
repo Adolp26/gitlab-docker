@@ -19,3 +19,6 @@ restore_gitlab() {
     # Iniciar containers
     docker compose up -d
 }
+
+# Restaura o GitLab
+restore_gitlab
