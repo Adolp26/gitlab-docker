@@ -9,6 +9,8 @@ fi
 init_gitlab() {
   # Cria diretórios necessários
   mkdir -p gitlab/{config,logs,data,gitlab-runner}
+  sudo chown -R root:root gitlab/
+  sudo chmod -R 755 gitlab/
 
   # Baixa imagens customizadas
   docker pull $DOCKER_USER/gitlab-custom:latest
@@ -85,7 +87,7 @@ EOL
   echo "1. Acesse http://$GITLAB_HOST"
   echo "2. Faça login como root com a senha acima"
   echo "3. Vá em Admin Area > CI/CD > Runners e copie o token de registro"
-  echo "4. Descomente a seção do gitlab-runner no docker-compose.yml"
+  echo "4. Descomendocker pste a seção do gitlab-runner no docker-compose.yml"
   echo "5. Execute: docker compose up -d gitlab-runner"
   echo "6. Execute: docker compose exec gitlab-runner gitlab-runner register"
 }
