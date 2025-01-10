@@ -9,12 +9,11 @@ fi
 init_gitlab() {
   # Cria diretórios necessários
   mkdir -p gitlab/{config,logs,data,gitlab-runner}
-  sudo chown -R root:root gitlab/
+  sudo chown -R 1000:1000 gitlab/
   sudo chmod -R 755 gitlab/
 
   # Baixa imagens customizadas
-  docker pull $DOCKER_USER/gitlab-custom:latest
-  # docker pull $DOCKER_USER/gitlab-runner-custom:latest
+  docker pull "$DOCKER_USER/gitlab-custom:latest"
 
   # Cria docker-compose.yml com mapeamentos de volume
   cat >docker-compose.yml <<EOL
@@ -46,19 +45,7 @@ services:
         gitlab_rails['initial_root_password'] = 'password123'
     networks:
       - gitlab-network
-
-  # Runner comentado inicialmente para primeira execução
-  #gitlab-runner:
-  #  image: '$DOCKER_USER/gitlab-runner-custom:latest'
-  #  container_name: gitlab-runner
-  #  restart: always
-  #  volumes:
-  #    - './gitlab/gitlab-runner:/etc/gitlab-runner'
-  #    - '/var/run/docker.sock:/var/run/docker.sock'
-  #  networks:
-  #    - gitlab-network
-  #  depends_on:
-  #    - gitlab
+    privileged: true # Adicionado para evitar problemas de permissões
 
 networks:
   gitlab-network:
@@ -71,26 +58,33 @@ EOL
 
   # Aguarda até o GitLab estar pronto
   echo "Aguardando o GitLab iniciar..."
-  until curl -s http://$GITLAB_HOST/-/health >/dev/null; do
-    if [ "$(curl -s -o /dev/null -w '%{http_code}' http://$GITLAB_HOST/-/health)" != "200" ]; then
-      echo "Erro ao conectar ao GitLab. Verifique se o serviço está rodando corretamente."
-      break
-    fi
-    echo "Ainda inicializando... (aguarde, isso pode levar alguns minutos)"
+  until curl -s http://"$GITLAB_HOST"/-/health >/dev/null; do
+    echo "Ainda inicializando... (isso pode levar alguns minutos)"
     sleep 30
   done
 
   echo "O GitLab está pronto!"
   echo "Senha inicial do root:"
-  sudo cat gitlab/config/initial_root_password
+  sudo cat gitlab/config/initial_root_password || echo "Arquivo de senha não encontrado."
   echo -e "\nPróximos passos:"
   echo "1. Acesse http://$GITLAB_HOST"
   echo "2. Faça login como root com a senha acima"
   echo "3. Vá em Admin Area > CI/CD > Runners e copie o token de registro"
-  echo "4. Descomendocker pste a seção do gitlab-runner no docker-compose.yml"
+  echo "4. Descomente a seção do gitlab-runner no docker-compose.yml"
   echo "5. Execute: docker compose up -d gitlab-runner"
   echo "6. Execute: docker compose exec gitlab-runner gitlab-runner register"
 }
 
-# Executa a função
+# Verifica permissões do Docker
+check_docker_permissions() {
+  if ! docker ps >/dev/null 2>&1; then
+    echo "O usuário atual não tem permissão para acessar o Docker. Tentando corrigir..."
+    sudo usermod -aG docker "$(whoami)"
+    echo "Reinicie sua sessão e execute o script novamente."
+    exit 1
+  fi
+}
+
+# Executa verificações e a função principal
+check_docker_permissions
 init_gitlab
