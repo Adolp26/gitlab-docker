@@ -17,7 +17,6 @@ init_gitlab() {
 
   # Cria docker-compose.yml com mapeamentos de volume
   cat >docker-compose.yml <<EOL
-version: '3.8'
 services:
   gitlab:
     image: '\${DOCKER_USER}/gitlab-custom:latest'
@@ -32,21 +31,19 @@ services:
       - './gitlab/logs:/var/log/gitlab'
       - './gitlab/data:/var/opt/gitlab'
     shm_size: '256m'
-    environment:
-      GITLAB_OMNIBUS_CONFIG: |
-        external_url 'http://\${GITLAB_HOST}'
-        gitlab_rails['gitlab_shell_ssh_port'] = 2222
-        postgresql['shared_buffers'] = "256MB"
-        unicorn['worker_processes'] = 2
-        postgresql['max_worker_processes'] = 4
-        prometheus['enable'] = false
-        alertmanager['enable'] = false
-        grafana['enable'] = false
-        gitlab_rails['initial_root_password'] = 'password123'
     networks:
       - gitlab-network
-    privileged: true # Adicionado para evitar problemas de permissões
-
+    privileged: true 
+  gitlab-runner:
+    image: 'gitlab/gitlab-runner:latest'
+    container_name: gitlab-runner
+    restart: always
+    volumes:
+      - './gitlab-runner/config:/etc/gitlab-runner'  # Configuração do GitLab Runner
+      - '/var/run/docker.sock:/var/run/docker.sock' # Necessário para o Docker executar dentro do Runner
+    networks:
+      - gitlab-network
+    privileged: true  # Necessário para rodar o Docker dentro do container
 networks:
   gitlab-network:
     name: gitlab-network
@@ -58,10 +55,10 @@ EOL
 
   # Aguarda até o GitLab estar pronto
   echo "Aguardando o GitLab iniciar..."
-  until curl -s http://"$GITLAB_HOST"/-/health >/dev/null; do
-    echo "Ainda inicializando... (isso pode levar alguns minutos)"
-    sleep 30
-  done
+  if [ "$(curl -s -o /dev/null -w "%{http_code}" http://"$GITLAB_HOST"/-/health)" -ne 200 ]; then
+    echo "GitLab ainda não está pronto. Verifique novamente mais tarde."
+    exit 1
+  fi
 
   echo "O GitLab está pronto!"
   echo "Senha inicial do root:"
