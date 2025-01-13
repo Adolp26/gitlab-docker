@@ -14,6 +14,7 @@ init_gitlab() {
 
   # Baixa imagens customizadas
   docker pull "$DOCKER_USER/gitlab-custom:latest"
+  docker pull "$DOCKER_USER/gitlab-runner-custom:latest"
 
   # Cria docker-compose.yml com mapeamentos de volume
   cat >docker-compose.yml <<EOL
