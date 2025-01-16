@@ -9,14 +9,14 @@ NC='\033[0m'
 # Função para criar diretórios com permissões corretas
 setup_directories() {
     echo "Criando diretórios..."
-    
+
     # 1. Criar diretórios principais
     mkdir -p gitlab/{config,logs,data}
     mkdir -p gitlab-runner/config
-    
+
     # 2. Criar o arquivo config.toml antes de mudar as permissões
     echo "Criando arquivo config.toml..."
-    cat > gitlab-runner/config/config.toml << 'EOL'
+    cat >gitlab-runner/config/config.toml <<'EOL'
 concurrent = 4
 check_interval = 0
 
@@ -43,11 +43,11 @@ EOL
     echo "Ajustando permissões..."
     sudo chown -R 1000:1000 gitlab/
     sudo chmod -R 755 gitlab/
-    
+
     sudo chown -R 998:998 gitlab-runner/
     sudo chmod -R 755 gitlab-runner/
     sudo chmod 644 gitlab-runner/config/config.toml
-    
+
     # 4. Verificar se tudo foi criado corretamente
     echo "Verificando criação dos arquivos..."
     if [ -f "gitlab-runner/config/config.toml" ]; then
@@ -125,7 +125,7 @@ check_docker_permissions() {
 set_gitlab_host() {
     read -rp "Digite o hostname ou IP do GitLab: " gitlab_host
     export GITLAB_HOST="$gitlab_host"
-    echo "export GITLAB_HOST=$gitlab_host" >> ~/.bashrc
+    echo "export GITLAB_HOST=$gitlab_host" >>~/.bashrc
     echo -e "${GREEN}GITLAB_HOST configurado como: $gitlab_host${NC}"
 }
 
@@ -133,7 +133,7 @@ set_gitlab_host() {
 set_docker_user() {
     read -rp "Digite seu usuário do DockerHub: " docker_user
     export DOCKER_USER="$docker_user"
-    echo "export DOCKER_USER=$docker_user" >> ~/.bashrc
+    echo "export DOCKER_USER=$docker_user" >>~/.bashrc
     echo -e "${GREEN}DOCKER_USER configurado como: $docker_user${NC}"
 }
 
@@ -154,16 +154,23 @@ start_gitlab() {
         echo -e "${RED}Variáveis de ambiente não configuradas. Configure-as primeiro.${NC}"
         return 1
     fi
-    
+
     echo "Iniciando GitLab..."
     docker compose -f docker-compose.gitlab.yml up -d
-    
+
     echo "Aguardando o GitLab iniciar..."
-    while [ "$(curl -s -o /dev/null -w "%{http_code}" http://"$GITLAB_HOST"/-/health)" != "200" ]; do
-        echo "Aguardando GitLab ficar online..."
+    while true; do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://"$GITLAB_HOST"/-/health)
+
+        if [ "$HTTP_CODE" == "200" ]; then
+            echo -e "${GREEN}GitLab está online!${NC}"
+            break
+        else
+            echo -e "${RED}Status atual: $HTTP_CODE. GitLab ainda não está online...${NC}"
+        fi
+
         sleep 10
     done
-    echo -e "${GREEN}GitLab está online!${NC}"
 }
 
 # Função para iniciar Runner
@@ -172,7 +179,7 @@ start_runner() {
         echo -e "${RED}Arquivo docker-compose.runner.yml não encontrado${NC}"
         return 1
     fi
-    
+
     echo "Iniciando GitLab Runner..."
     docker compose -f docker-compose.runner.yml up -d
     echo -e "${GREEN}GitLab Runner iniciado${NC}"
@@ -208,35 +215,35 @@ show_menu() {
         echo "8. Registrar novo Runner"
         echo "9. Atualizar token do Runner"
         echo "0. Sair"
-        
+
         read -rp "Escolha uma opção: " choice
-        
+
         case $choice in
-            1) set_gitlab_host ;;
-            2) set_docker_user ;;
-            3)
-                setup_directories
-                create_gitlab_compose
-                create_runner_compose
-                echo -e "${GREEN}Diretórios e arquivos criados com sucesso${NC}"
-                ;;
-            4) start_gitlab ;;
-            5) start_runner ;;
-            6) show_root_password ;;
-            7) show_status ;;
-            8)
-                echo "Para registrar um novo runner:"
-                echo "1. Acesse http://$GITLAB_HOST"
-                echo "2. Vá em Admin Area > CI/CD > Runners"
-                echo "3. Copie o token de registro"
-                echo "4. Execute: docker compose -f docker-compose.runner.yml exec gitlab-runner gitlab-runner register"
-                ;;
-            9) update_runner_token ;;
-            0) 
-                echo "Saindo..."
-                exit 0
-                ;;
-            *) echo -e "${RED}Opção inválida${NC}" ;;
+        1) set_gitlab_host ;;
+        2) set_docker_user ;;
+        3)
+            setup_directories
+            create_gitlab_compose
+            create_runner_compose
+            echo -e "${GREEN}Diretórios e arquivos criados com sucesso${NC}"
+            ;;
+        4) start_gitlab ;;
+        5) start_runner ;;
+        6) show_root_password ;;
+        7) show_status ;;
+        8)
+            echo "Para registrar um novo runner:"
+            echo "1. Acesse http://$GITLAB_HOST"
+            echo "2. Vá em Admin Area > CI/CD > Runners"
+            echo "3. Copie o token de registro"
+            echo "4. Execute: docker compose -f docker-compose.runner.yml exec gitlab-runner gitlab-runner register"
+            ;;
+        9) update_runner_token ;;
+        0)
+            echo "Saindo..."
+            exit 0
+            ;;
+        *) echo -e "${RED}Opção inválida${NC}" ;;
         esac
     done
 }
