@@ -36,7 +36,7 @@ check_interval = 0
     oom_kill_disable = false
     disable_cache = false
     volumes = ["/cache"]
-    shm_size = "256m"
+    shm_size = 256
 EOL
 
     # 3. Ajustar permissões dos diretórios e arquivos
