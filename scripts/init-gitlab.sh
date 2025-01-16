@@ -9,14 +9,14 @@ NC='\033[0m'
 # Função para criar diretórios com permissões corretas
 setup_directories() {
     echo "Criando diretórios..."
-    mkdir -p gitlab/{config,logs,data} gitlab-runner/config
-    sudo chown -R 1000:1000 gitlab/
-    sudo chmod -R 755 gitlab/
-    sudo chown -R 998:998 gitlab-runner/
-    sudo chmod -R 755 gitlab-runner/
     
-    # Criar arquivo config.toml
-    cat >gitlab-runner/config/config.toml <<EOL
+    # 1. Criar diretórios principais
+    mkdir -p gitlab/{config,logs,data}
+    mkdir -p gitlab-runner/config
+    
+    # 2. Criar o arquivo config.toml antes de mudar as permissões
+    echo "Criando arquivo config.toml..."
+    cat > gitlab-runner/config/config.toml << 'EOL'
 concurrent = 4
 check_interval = 0
 
@@ -36,12 +36,27 @@ check_interval = 0
     oom_kill_disable = false
     disable_cache = false
     volumes = ["/cache"]
-    shm_size = 256
+    shm_size = "256m"
 EOL
+
+    # 3. Ajustar permissões dos diretórios e arquivos
+    echo "Ajustando permissões..."
+    sudo chown -R 1000:1000 gitlab/
+    sudo chmod -R 755 gitlab/
     
-    # Ajustar permissões do config.toml
-    sudo chown 998:998 gitlab-runner/config/config.toml
+    sudo chown -R 998:998 gitlab-runner/
+    sudo chmod -R 755 gitlab-runner/
     sudo chmod 644 gitlab-runner/config/config.toml
+    
+    # 4. Verificar se tudo foi criado corretamente
+    echo "Verificando criação dos arquivos..."
+    if [ -f "gitlab-runner/config/config.toml" ]; then
+        echo -e "${GREEN}Arquivo config.toml criado com sucesso${NC}"
+        echo -e "${YELLOW}Permissões do arquivo:${NC}"
+        ls -l gitlab-runner/config/config.toml
+    else
+        echo -e "${RED}Erro ao criar arquivo config.toml${NC}"
+    fi
 }
 
 # Função para criar docker-compose do GitLab
