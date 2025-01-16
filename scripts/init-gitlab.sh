@@ -209,7 +209,7 @@ show_menu() {
         echo "7. Mostrar status dos serviços"
         echo "8. Registrar novo Runner"
         echo "9. Atualizar token do Runner"
-        echo "10. Sair"
+        echo "0. Sair"
         
         read -rp "Escolha uma opção: " choice
         
@@ -234,7 +234,7 @@ show_menu() {
                 echo "4. Execute: docker compose -f docker-compose.runner.yml exec gitlab-runner gitlab-runner register"
                 ;;
             9) update_runner_token ;;
-            10) 
+            0) 
                 echo "Saindo..."
                 exit 0
                 ;;
