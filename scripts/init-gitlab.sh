@@ -64,13 +64,25 @@ create_gitlab_compose() {
     cat >docker-compose.gitlab.yml <<EOL
 services:
   gitlab:
-    image: \${DOCKER_USER}/gitlab-custom:latest
+    image: gitlab/gitlab-ee:latest
     container_name: gitlab
     restart: always
     hostname: \${GITLAB_HOST}
     environment:
       GITLAB_OMNIBUS_CONFIG: |
+        # Configuração de URL e porta SSH
         external_url 'http://\${GITLAB_HOST}'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+
+        # Configurações de recursos
+        postgresql['shared_buffers'] = "256MB"
+        unicorn['worker_processes'] = 2
+        postgresql['max_worker_processes'] = 4
+
+        # Desabilitar serviços não essenciais
+        prometheus['enable'] = false
+        alertmanager['enable'] = false
+        grafana['enable'] = false
     ports:
       - '80:80'
       - '443:443'
@@ -82,7 +94,6 @@ services:
     shm_size: '256m'
     networks:
       - gitlab-network
-    privileged: true
 
 networks:
   gitlab-network:
