@@ -158,19 +158,8 @@ start_gitlab() {
     echo "Iniciando GitLab..."
     docker compose -f docker-compose.gitlab.yml up -d
 
-    echo "Aguardando o GitLab iniciar..."
-    while true; do
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://"$GITLAB_HOST"/-/health)
-
-        if [ "$HTTP_CODE" == "200" ]; then
-            echo -e "${GREEN}GitLab está online!${NC}"
-            break
-        else
-            echo -e "${RED}Status atual: $HTTP_CODE. GitLab ainda não está online...${NC}"
-        fi
-
-        sleep 10
-    done
+    echo "Verifique a URL do GITLAB em http://$GITLAB_HOST"
+   
 }
 
 # Função para iniciar Runner
