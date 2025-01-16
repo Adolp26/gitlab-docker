@@ -62,7 +62,6 @@ EOL
 # Função para criar docker-compose do GitLab
 create_gitlab_compose() {
     cat >docker-compose.gitlab.yml <<EOL
-version: '3.7'
 services:
   gitlab:
     image: \${DOCKER_USER}/gitlab-custom:latest
@@ -94,7 +93,6 @@ EOL
 # Função para criar docker-compose do Runner
 create_runner_compose() {
     cat >docker-compose.runner.yml <<EOL
-version: '3.7'
 services:
   gitlab-runner:
     image: 'gitlab/gitlab-runner:latest'
