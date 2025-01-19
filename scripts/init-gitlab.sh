@@ -1,73 +1,89 @@
+#!/bin/bash
+
 # Cores para output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Função para configurar variáveis de ambiente
-set_environment_variables() {
-    echo -e "${GREEN}Configuração inicial - Por favor, insira os valores obrigatórios:${NC}"
-    
-    # Solicitar GITLAB_HOST
-    while [ -z "$GITLAB_HOST" ]; do
-        read -p "Insira o host do GitLab (exemplo: gitlab.meudominio.com): " GITLAB_HOST
-    done
-    export GITLAB_HOST
+# Função para criar diretórios com permissões corretas
+setup_directories() {
+    echo "Criando diretórios..."
 
-    # Solicitar DOCKER_USER
-    while [ "$INSTALLATION_TYPE" = "docker" ] && [ -z "$DOCKER_USER" ]; do
-        read -p "Insira o nome de usuário do Docker Hub: " DOCKER_USER
-    done
-    export DOCKER_USER
+    # 1. Criar diretórios principais
+    mkdir -p gitlab/{config,logs,data}
+    mkdir -p gitlab-runner/config
 
-    echo -e "${GREEN}As variáveis de ambiente foram configuradas com sucesso!${NC}"
-}
+    # 2. Criar o arquivo config.toml antes de mudar as permissões
+    if [ ! -f "gitlab-runner/config/config.toml" ]; then
+        echo "Criando arquivo config.toml..."
+        cat >gitlab-runner/config/config.toml <<'EOL'
+concurrent = 4
+check_interval = 0
 
-# Verificar se variáveis obrigatórias estão definidas
-if [ -z "$GITLAB_HOST" ] || ([ "$INSTALLATION_TYPE" = "docker" ] && [ -z "$DOCKER_USER" ]); then
-    set_environment_variables
-fi
+[session_server]
+  session_timeout = 1800
 
-# Função para verificar variáveis obrigatórias
-check_required_vars() {
-    local missing_vars=0
-    
-    if [ -z "$GITLAB_HOST" ]; then
-        echo -e "${RED}GITLAB_HOST não está configurado${NC}"
-        missing_vars=1
+[[runners]]
+  name = "docker-runner"
+  url = "http://gitlab"
+  token = "__RUNNER_TOKEN__"
+  executor = "docker"
+  [runners.docker]
+    tls_verify = false
+    image = "ubuntu:latest"
+    privileged = true
+    disable_entrypoint_overwrite = false
+    oom_kill_disable = false
+    disable_cache = false
+    volumes = ["/cache"]
+    shm_size = 256
+EOL
     fi
-    
-    if [ "$INSTALLATION_TYPE" = "docker" ] && [ -z "$DOCKER_USER" ]; then
-        echo -e "${RED}DOCKER_USER não está configurado${NC}"
-        missing_vars=1
+
+    # 3. Ajustar permissões dos diretórios e arquivos
+    echo "Ajustando permissões..."
+    sudo chown -R 1000:1000 gitlab gitlab-runner
+    sudo chmod -R 755 gitlab gitlab-runner
+    sudo chmod 644 gitlab-runner/config/config.toml
+
+    # 4. Verificar se tudo foi criado corretamente
+    echo "Verificando criação dos arquivos..."
+    if [ -f "gitlab-runner/config/config.toml" ]; then
+        echo -e "${GREEN}Arquivo config.toml criado com sucesso${NC}"
+        echo -e "${YELLOW}Permissões do arquivo:${NC}"
+        ls -l gitlab-runner/config/config.toml
+    else
+        echo -e "${RED}Erro ao criar arquivo config.toml${NC}"
     fi
-    
-    [ $missing_vars -eq 1 ] && return 1
-    return 0
 }
 
 # Função para criar docker-compose do GitLab
 create_gitlab_compose() {
-    if [ "$INSTALLATION_TYPE" != "docker" ]; then
-        return 0
-    fi
-
-    mkdir -p gitlab/{config,logs,data,backups}
-    cat > docker-compose.gitlab.yml << EOL
-version: '3.7'
-
+    if [ ! -f "docker-compose.gitlab.yml" ]; then
+        cat >docker-compose.gitlab.yml <<EOL
 services:
   gitlab:
     image: gitlab/gitlab-ee:latest
     container_name: gitlab
-    hostname: ${GITLAB_HOST}
     restart: always
+    hostname: \${GITLAB_HOST}
     environment:
       GITLAB_OMNIBUS_CONFIG: |
-        external_url 'http://${GITLAB_HOST}'
+        # Configuração de URL e porta SSH
+        external_url 'http://\${GITLAB_HOST}'
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
-        gitlab_rails['time_zone'] = 'America/Sao_Paulo'
-        gitlab_rails['backup_keep_time'] = 604800
+
+        # Configurações de recursos
+        postgresql['shared_buffers'] = "128MB"
+        unicorn['worker_processes'] = 1
+        postgresql['max_worker_processes'] = 2
+
+        # Desabilitar serviços não essenciais
+        prometheus['enable'] = false
+        alertmanager['enable'] = false
+        grafana['enable'] = false
+        gitlab_rails['monitoring_enabled'] = false
     ports:
       - '80:80'
       - '443:443'
@@ -76,7 +92,6 @@ services:
       - './gitlab/config:/etc/gitlab'
       - './gitlab/logs:/var/log/gitlab'
       - './gitlab/data:/var/opt/gitlab'
-      - './gitlab/backups:/var/opt/gitlab/backups'
     shm_size: '256m'
     networks:
       - gitlab-network
@@ -84,167 +99,157 @@ services:
 networks:
   gitlab-network:
     name: gitlab-network
-    driver: bridge
 EOL
+    fi
 }
 
 # Função para criar docker-compose do Runner
 create_runner_compose() {
-    if [ "$INSTALLATION_TYPE" != "docker" ]; then
-        return 0
-    fi
-
-    mkdir -p gitlab-runner/config
-    cat > docker-compose.runner.yml << EOL
-version: '3.7'
-
+    if [ ! -f "docker-compose.runner.yml" ]; then
+        cat >docker-compose.runner.yml <<EOL
 services:
   gitlab-runner:
-    image: gitlab/gitlab-runner:latest
+    image: 'gitlab/gitlab-runner:latest'
     container_name: gitlab-runner
     restart: always
-    environment:
-      - RUNNER_EXECUTOR=docker
-      - DOCKER_IMAGE=ubuntu:latest
-      - DOCKER_PULL_POLICY=if-not-present
-      - DOCKER_VOLUMES=/var/run/docker.sock:/var/run/docker.sock
     volumes:
       - './gitlab-runner/config:/etc/gitlab-runner'
       - '/var/run/docker.sock:/var/run/docker.sock'
-      - '/cache:/cache'
     networks:
       - gitlab-network
+    privileged: false  # Modificado para reduzir consumo de recursos
+
+networks:
+  gitlab-network:
+    external: true
 EOL
+    fi
 }
 
-# Função para verificar requisitos do sistema
-check_system_requirements() {
-    echo "Verificando requisitos do sistema..."
-    
-    local total_mem=$(free -g | awk '/^Mem:/{print $2}')
-    if [ "$total_mem" -lt 4 ]; then
-        echo -e "${RED}Atenção: GitLab requer no mínimo 4GB de RAM. Sistema tem ${total_mem}GB${NC}"
+# Função para verificar permissões do Docker
+check_docker_permissions() {
+    if ! docker ps >/dev/null 2>&1; then
+        echo -e "${RED}O usuário atual não tem permissão para acessar o Docker. Tentando corrigir...${NC}"
+        sudo usermod -aG docker "$(whoami)"
+        echo "Reinicie sua sessão e execute o script novamente."
+        exit 1
+    fi
+}
+
+# Função para configurar GITLAB_HOST
+set_gitlab_host() {
+    read -rp "Digite o hostname ou IP do GitLab: " gitlab_host
+    export GITLAB_HOST="$gitlab_host"
+    echo "export GITLAB_HOST=$gitlab_host" >>~/.bashrc
+    echo -e "${GREEN}GITLAB_HOST configurado como: $gitlab_host${NC}"
+}
+
+# Função para configurar DOCKER_USER
+set_docker_user() {
+    read -rp "Digite seu usuário do DockerHub: " docker_user
+    export DOCKER_USER="$docker_user"
+    echo "export DOCKER_USER=$docker_user" >>~/.bashrc
+    echo -e "${GREEN}DOCKER_USER configurado como: $docker_user${NC}"
+}
+
+# Função para atualizar token do runner
+update_runner_token() {
+    read -rp "Digite o token do runner: " runner_token
+    if [ -f "gitlab-runner/config/config.toml" ]; then
+        sudo sed -i "s/__RUNNER_TOKEN__/$runner_token/" gitlab-runner/config/config.toml
+        echo -e "${GREEN}Token do runner atualizado com sucesso${NC}"
+    else
+        echo -e "${RED}Arquivo config.toml não encontrado${NC}"
+    fi
+}
+
+# Função para iniciar GitLab
+start_gitlab() {
+    if [ -z "$DOCKER_USER" ] || [ -z "$GITLAB_HOST" ]; then
+        echo -e "${RED}Variáveis de ambiente não configuradas. Configure-as primeiro.${NC}"
         return 1
     fi
-    
-    local free_space=$(df -BG . | awk 'NR==2 {print $4}' | sed 's/G//')
-    if [ "$free_space" -lt 20 ]; then
-        echo -e "${RED}Atenção: É recomendado pelo menos 20GB de espaço livre. Disponível: ${free_space}GB${NC}"
+
+    echo "Iniciando GitLab..."
+    docker compose -f docker-compose.gitlab.yml up -d
+
+    echo "Verifique a URL do GITLAB em http://$GITLAB_HOST"
+}
+
+# Função para iniciar Runner
+start_runner() {
+    if [ ! -f "docker-compose.runner.yml" ]; then
+        echo -e "${RED}Arquivo docker-compose.runner.yml não encontrado${NC}"
         return 1
     fi
-    
-    if [ "$INSTALLATION_TYPE" = "docker" ]; then
-        if ! command -v docker >/dev/null 2>&1; then
-            echo -e "${RED}Docker não está instalado${NC}"
-            return 1
-        fi
-        
-        if ! docker info >/dev/null 2>&1; then
-            echo -e "${RED}Docker daemon não está rodando ou usuário não tem permissão${NC}"
-            return 1
-        fi
-    fi
-    
-    echo -e "${GREEN}Todos os requisitos do sistema atendidos${NC}"
-    return 0
+
+    echo "Iniciando GitLab Runner..."
+    docker compose -f docker-compose.runner.yml up -d
+    echo -e "${GREEN}GitLab Runner iniciado${NC}"
 }
 
-# Função para backup (Docker)
-backup_gitlab() {
-    if [ "$INSTALLATION_TYPE" = "docker" ]; then
-        echo "Iniciando backup do GitLab..."
-        docker compose -f docker-compose.gitlab.yml exec gitlab gitlab-backup create
-        echo "Backup concluído. Arquivos em ./gitlab/backups/"
+# Função para mostrar senha do root
+show_root_password() {
+    if [ -f "gitlab/config/initial_root_password" ]; then
+        echo -e "${YELLOW}Senha inicial do root:${NC}"
+        sudo cat gitlab/config/initial_root_password
     else
-        echo "Executando backup local..."
-        sudo gitlab-rake gitlab:backup:create
+        echo -e "${RED}Arquivo de senha não encontrado.${NC}"
     fi
 }
 
-# Função para restaurar backup (Docker)
-restore_gitlab() {
-    echo "Listando backups disponíveis:"
-    ls -l ./gitlab/backups/
-    read -rp "Digite o nome do arquivo de backup para restaurar: " backup_file
-
-    if [ -f "./gitlab/backups/$backup_file" ]; then
-        echo "Restaurando backup..."
-        docker compose -f docker-compose.gitlab.yml exec gitlab gitlab-backup restore BACKUP=$backup_file
-        echo "Restauração concluída"
-    else
-        echo -e "${RED}Arquivo de backup não encontrado${NC}"
-    fi
-}
-
-# Função para configurar o tipo de instalação
-set_installation_type() {
-    local valid_choice=0
-    while [ $valid_choice -eq 0 ]; do
-        echo "Escolha o tipo de instalação:"
-        echo "1. Docker"
-        echo "2. Local"
-        read -rp "Digite sua escolha (1 ou 2): " choice
-        
-        case $choice in
-            1)
-                INSTALLATION_TYPE="docker"
-                valid_choice=1
-                ;;
-            2)
-                INSTALLATION_TYPE="local"
-                valid_choice=1
-                ;;
-            *)
-                echo -e "${RED}Escolha inválida! Por favor, digite 1 ou 2.${NC}"
-                ;;
-        esac
-    done
-    export INSTALLATION_TYPE
-    echo -e "${GREEN}Tipo de instalação configurado como: $INSTALLATION_TYPE${NC}"
+# Função para mostrar status dos serviços
+show_status() {
+    echo -e "${YELLOW}Status dos containers:${NC}"
+    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E 'gitlab|runner'
 }
 
 # Menu principal
 show_menu() {
     while true; do
         echo -e "\n${YELLOW}=== GitLab Setup Menu ===${NC}"
-        echo -e "${GREEN}Configuração atual:${NC}"
-        echo "INSTALLATION_TYPE=${INSTALLATION_TYPE:-não configurado}"
-        echo "GITLAB_HOST=${GITLAB_HOST:-não configurado}"
-        [ "$INSTALLATION_TYPE" = "docker" ] && echo "DOCKER_USER=${DOCKER_USER:-não configurado}"
-        
-        echo -e "\n${YELLOW}Opções:${NC}"
-        echo "1. Configurar tipo de instalação (Docker/Local)"
-        echo "2. Configurar variáveis obrigatórias"
-        echo "3. Verificar requisitos do sistema"
-        echo "4. Preparar ambiente"
-        echo "5. Fazer backup"
-        echo "6. Restaurar backup"
+        echo "1. Configurar GITLAB_HOST"
+        echo "2. Configurar DOCKER_USER"
+        echo "3. Criar diretórios e arquivos docker-compose"
+        echo "4. Iniciar GitLab"
+        echo "5. Iniciar GitLab Runner"
+        echo "6. Mostrar senha do root"
+        echo "7. Mostrar status dos serviços"
+        echo "8. Registrar novo Runner"
+        echo "9. Atualizar token do Runner"
         echo "0. Sair"
 
         read -rp "Escolha uma opção: " choice
 
         case $choice in
-            1) set_installation_type ;;
-            2) set_environment_variables ;;
-            3) check_system_requirements ;;
-            4)
-                if check_required_vars; then
-                    if [ "$INSTALLATION_TYPE" = "docker" ]; then
-                        create_gitlab_compose
-                        create_runner_compose
-                        echo -e "${GREEN}Ambiente Docker preparado${NC}"
-                    else
-                        echo "Instalação local ainda não implementada"
-                    fi
-                fi
-                ;;
-            5) backup_gitlab ;;
-            6) restore_gitlab ;;
-            0) echo "Saindo..."; exit 0 ;;
-            *) echo -e "${RED}Opção inválida${NC}" ;;
+        1) set_gitlab_host ;;
+        2) set_docker_user ;;
+        3)
+            setup_directories
+            create_gitlab_compose
+            create_runner_compose
+            echo -e "${GREEN}Diretórios e arquivos criados com sucesso${NC}"
+            ;;
+        4) start_gitlab ;;
+        5) start_runner ;;
+        6) show_root_password ;;
+        7) show_status ;;
+        8)
+            echo "Para registrar um novo runner:"
+            echo "1. Acesse http://$GITLAB_HOST"
+            echo "2. Vá em Admin Area > CI/CD > Runners"
+            echo "3. Copie o token de registro"
+            echo "4. Execute: docker compose -f docker-compose.runner.yml exec gitlab-runner gitlab-runner register"
+            ;;
+        9) update_runner_token ;;
+        0) exit 0 ;;
+        *) echo -e "${RED}Opção inválida. Tente novamente.${NC}" ;;
         esac
     done
 }
 
-# Iniciar menu
+# Verificar permissões do Docker antes de prosseguir
+check_docker_permissions
+
+# Mostrar menu
 show_menu
