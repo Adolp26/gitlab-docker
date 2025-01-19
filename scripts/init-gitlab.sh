@@ -4,6 +4,30 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Função para configurar variáveis de ambiente
+set_environment_variables() {
+    echo -e "${GREEN}Configuração inicial - Por favor, insira os valores obrigatórios:${NC}"
+    
+    # Solicitar GITLAB_HOST
+    while [ -z "$GITLAB_HOST" ]; do
+        read -p "Insira o host do GitLab (exemplo: gitlab.meudominio.com): " GITLAB_HOST
+    done
+    export GITLAB_HOST
+
+    # Solicitar DOCKER_USER
+    while [ "$INSTALLATION_TYPE" = "docker" ] && [ -z "$DOCKER_USER" ]; do
+        read -p "Insira o nome de usuário do Docker Hub: " DOCKER_USER
+    done
+    export DOCKER_USER
+
+    echo -e "${GREEN}As variáveis de ambiente foram configuradas com sucesso!${NC}"
+}
+
+# Verificar se variáveis obrigatórias estão definidas
+if [ -z "$GITLAB_HOST" ] || ([ "$INSTALLATION_TYPE" = "docker" ] && [ -z "$DOCKER_USER" ]); then
+    set_environment_variables
+fi
+
 # Função para verificar variáveis obrigatórias
 check_required_vars() {
     local missing_vars=0
@@ -28,6 +52,7 @@ create_gitlab_compose() {
         return 0
     fi
 
+    mkdir -p gitlab/{config,logs,data,backups}
     cat > docker-compose.gitlab.yml << EOL
 version: '3.7'
 
@@ -42,62 +67,7 @@ services:
         external_url 'http://${GITLAB_HOST}'
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
         gitlab_rails['time_zone'] = 'America/Sao_Paulo'
-        
-        # Configurações de Email (ajuste conforme necessário)
-        # gitlab_rails['smtp_enable'] = true
-        # gitlab_rails['smtp_address'] = "smtp.server.com"
-        # gitlab_rails['smtp_port'] = 587
-        # gitlab_rails['smtp_user_name'] = "smtp_user"
-        # gitlab_rails['smtp_password'] = "smtp_password"
-        # gitlab_rails['smtp_domain'] = "example.com"
-        # gitlab_rails['smtp_authentication'] = "login"
-        # gitlab_rails['smtp_enable_starttls_auto'] = true
-        # gitlab_rails['gitlab_email_from'] = 'gitlab@example.com'
-        
-        # Configurações de Backup
         gitlab_rails['backup_keep_time'] = 604800
-        
-        # Otimizações de Recursos
-        postgresql['shared_buffers'] = "256MB"
-        postgresql['max_worker_processes'] = 4
-        postgresql['work_mem'] = "16MB"
-        postgresql['maintenance_work_mem'] = "64MB"
-        
-        # Cache e Sessions
-        redis['maxmemory'] = "256mb"
-        redis['maxmemory_policy'] = "allkeys-lru"
-        redis['tcp_timeout'] = "60"
-        
-        # Workers e Processos
-        unicorn['worker_processes'] = 2
-        unicorn['worker_timeout'] = 60
-        sidekiq['max_concurrency'] = 15
-        gitaly['ruby_num_workers'] = 2
-        gitlab_workhorse['max_connections'] = 500
-        
-        # Configurações do Nginx
-        nginx['worker_processes'] = 2
-        nginx['worker_connections'] = 2048
-        nginx['keepalive_timeout'] = 65
-        nginx['gzip_enabled'] = true
-        
-        # Desabilitar serviços não essenciais
-        prometheus['enable'] = false
-        alertmanager['enable'] = false
-        grafana['enable'] = false
-        gitlab_monitor['enable'] = false
-        postgresql['enable_pgbouncer'] = false
-        
-        # Configurações de Armazenamento
-        git_data_dirs({ "default" => { "path" => "/var/opt/gitlab/git-data" } })
-        gitlab_rails['uploads_directory'] = "/var/opt/gitlab/gitlab-rails/uploads"
-        gitlab_rails['shared_path'] = "/var/opt/gitlab/gitlab-rails/shared"
-        
-        # Limites e Timeouts
-        gitlab_rails['artifacts_enabled'] = true
-        gitlab_rails['artifacts_path'] = "/var/opt/gitlab/gitlab-rails/artifacts"
-        gitlab_rails['lfs_enabled'] = true
-        gitlab_rails['lfs_storage_path'] = "/var/opt/gitlab/gitlab-rails/lfs-objects"
     ports:
       - '80:80'
       - '443:443'
@@ -108,21 +78,8 @@ services:
       - './gitlab/data:/var/opt/gitlab'
       - './gitlab/backups:/var/opt/gitlab/backups'
     shm_size: '256m'
-    ulimits:
-      memlock:
-        soft: 65536
-        hard: 65536
-      nofile:
-        soft: 65536
-        hard: 65536
     networks:
       - gitlab-network
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 2G
 
 networks:
   gitlab-network:
@@ -137,6 +94,7 @@ create_runner_compose() {
         return 0
     fi
 
+    mkdir -p gitlab-runner/config
     cat > docker-compose.runner.yml << EOL
 version: '3.7'
 
@@ -156,52 +114,6 @@ services:
       - '/cache:/cache'
     networks:
       - gitlab-network
-    extra_hosts:
-      - "gitlab:${GITLAB_HOST}"
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
-
-networks:
-  gitlab-network:
-    external: true
-EOL
-
-    # Criar configuração do runner
-    mkdir -p gitlab-runner/config
-    cat > gitlab-runner/config/config.toml << EOL
-concurrent = 4
-check_interval = 0
-shutdown_timeout = 0
-
-[session_server]
-  session_timeout = 1800
-
-[[runners]]
-  name = "docker-runner"
-  url = "http://${GITLAB_HOST}"
-  token = "__RUNNER_TOKEN__"
-  executor = "docker"
-  [runners.cache]
-    Type = "s3"
-    Shared = true
-  [runners.docker]
-    tls_verify = false
-    image = "ubuntu:latest"
-    privileged = true
-    disable_entrypoint_overwrite = false
-    oom_kill_disable = false
-    disable_cache = false
-    volumes = ["/cache", "/var/run/docker.sock:/var/run/docker.sock"]
-    shm_size = 0
-    memory = "1g"
-    memory_swap = "2g"
-    memory_reservation = "512m"
-    cpus = "1.5"
-    allowed_images = ["ruby:*", "python:*", "node:*", "php:*", "golang:*"]
 EOL
 }
 
@@ -209,21 +121,18 @@ EOL
 check_system_requirements() {
     echo "Verificando requisitos do sistema..."
     
-    # Verificar memória disponível
     local total_mem=$(free -g | awk '/^Mem:/{print $2}')
     if [ "$total_mem" -lt 4 ]; then
         echo -e "${RED}Atenção: GitLab requer no mínimo 4GB de RAM. Sistema tem ${total_mem}GB${NC}"
         return 1
     fi
     
-    # Verificar espaço em disco
     local free_space=$(df -BG . | awk 'NR==2 {print $4}' | sed 's/G//')
     if [ "$free_space" -lt 20 ]; then
         echo -e "${RED}Atenção: É recomendado pelo menos 20GB de espaço livre. Disponível: ${free_space}GB${NC}"
         return 1
     fi
     
-    # Verificar Docker se necessário
     if [ "$INSTALLATION_TYPE" = "docker" ]; then
         if ! command -v docker >/dev/null 2>&1; then
             echo -e "${RED}Docker não está instalado${NC}"
@@ -254,27 +163,47 @@ backup_gitlab() {
 
 # Função para restaurar backup (Docker)
 restore_gitlab() {
-    if [ "$INSTALLATION_TYPE" = "docker" ]; then
-        echo "Listando backups disponíveis:"
-        ls -l ./gitlab/backups/
-        
-        read -rp "Digite o nome do arquivo de backup para restaurar: " backup_file
-        
-        if [ -f "./gitlab/backups/$backup_file" ]; then
-            echo "Restaurando backup..."
-            docker compose -f docker-compose.gitlab.yml exec gitlab gitlab-backup restore BACKUP=$backup_file
-            echo "Restauração concluída"
-        else
-            echo -e "${RED}Arquivo de backup não encontrado${NC}"
-        fi
+    echo "Listando backups disponíveis:"
+    ls -l ./gitlab/backups/
+    read -rp "Digite o nome do arquivo de backup para restaurar: " backup_file
+
+    if [ -f "./gitlab/backups/$backup_file" ]; then
+        echo "Restaurando backup..."
+        docker compose -f docker-compose.gitlab.yml exec gitlab gitlab-backup restore BACKUP=$backup_file
+        echo "Restauração concluída"
     else
-        echo "Para restaurar backup local, use: sudo gitlab-rake gitlab:backup:restore"
+        echo -e "${RED}Arquivo de backup não encontrado${NC}"
     fi
 }
 
-[... resto do código continua o mesmo ...]
+# Função para configurar o tipo de instalação
+set_installation_type() {
+    local valid_choice=0
+    while [ $valid_choice -eq 0 ]; do
+        echo "Escolha o tipo de instalação:"
+        echo "1. Docker"
+        echo "2. Local"
+        read -rp "Digite sua escolha (1 ou 2): " choice
+        
+        case $choice in
+            1)
+                INSTALLATION_TYPE="docker"
+                valid_choice=1
+                ;;
+            2)
+                INSTALLATION_TYPE="local"
+                valid_choice=1
+                ;;
+            *)
+                echo -e "${RED}Escolha inválida! Por favor, digite 1 ou 2.${NC}"
+                ;;
+        esac
+    done
+    export INSTALLATION_TYPE
+    echo -e "${GREEN}Tipo de instalação configurado como: $INSTALLATION_TYPE${NC}"
+}
 
-# Menu principal atualizado
+# Menu principal
 show_menu() {
     while true; do
         echo -e "\n${YELLOW}=== GitLab Setup Menu ===${NC}"
@@ -285,76 +214,37 @@ show_menu() {
         
         echo -e "\n${YELLOW}Opções:${NC}"
         echo "1. Configurar tipo de instalação (Docker/Local)"
-        echo "2. Configurar GITLAB_HOST"
-        echo "3. Configurar DOCKER_USER (apenas para Docker)"
-        echo "4. Verificar requisitos do sistema"
-        echo "5. Preparar ambiente"
-        echo "6. Iniciar GitLab"
-        echo "7. Iniciar GitLab Runner"
-        echo "8. Mostrar senha do root"
-        echo "9. Mostrar status"
-        echo "10. Registrar novo Runner"
-        echo "11. Fazer backup"
-        echo "12. Restaurar backup"
+        echo "2. Configurar variáveis obrigatórias"
+        echo "3. Verificar requisitos do sistema"
+        echo "4. Preparar ambiente"
+        echo "5. Fazer backup"
+        echo "6. Restaurar backup"
         echo "0. Sair"
 
         read -rp "Escolha uma opção: " choice
 
         case $choice in
             1) set_installation_type ;;
-            2) set_gitlab_host ;;
-            3) set_docker_user ;;
-            4) check_system_requirements ;;
-            5)
+            2) set_environment_variables ;;
+            3) check_system_requirements ;;
+            4)
                 if check_required_vars; then
                     if [ "$INSTALLATION_TYPE" = "docker" ]; then
-                        setup_directories
                         create_gitlab_compose
                         create_runner_compose
                         echo -e "${GREEN}Ambiente Docker preparado${NC}"
                     else
-                        install_gitlab_local
-                        install_runner_local
-                        echo -e "${GREEN}Instalação local concluída${NC}"
+                        echo "Instalação local ainda não implementada"
                     fi
                 fi
                 ;;
-            6) start_gitlab ;;
-            7) start_runner ;;
-            8) show_root_password ;;
-            9)
-                if [ "$INSTALLATION_TYPE" = "docker" ]; then
-                    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E 'gitlab|runner'
-                else
-                    sudo gitlab-ctl status
-                    sudo gitlab-runner status
-                fi
-                ;;
-            10)
-                if [ "$INSTALLATION_TYPE" = "docker" ]; then
-                    echo "Para registrar um novo runner:"
-                    echo "1. Acesse http://$GITLAB_HOST"
-                    echo "2. Vá em Admin Area > CI/CD > Runners"
-                    echo "3. Copie o token de registro"
-                    echo "4. Execute: docker compose -f docker-compose.runner.yml exec gitlab-runner gitlab-runner register"
-                else
-                    echo "Para registrar um novo runner local:"
-                    echo "1. Acesse http://$GITLAB_HOST"
-                    echo "2. Vá em Admin Area > CI/CD > Runners"
-                    echo "3. Copie o token de registro"
-                    echo "4. Execute: sudo gitlab-runner register"
-                fi
-                ;;
-            11) backup_gitlab ;;
-            12) restore_gitlab ;;
-            0)
-                echo "Saindo..."
-                exit 0
-                ;;
+            5) backup_gitlab ;;
+            6) restore_gitlab ;;
+            0) echo "Saindo..."; exit 0 ;;
             *) echo -e "${RED}Opção inválida${NC}" ;;
         esac
     done
 }
 
-# Início do script
+# Iniciar menu
 show_menu
