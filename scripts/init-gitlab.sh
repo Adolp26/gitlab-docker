@@ -14,10 +14,9 @@ setup_directories() {
     mkdir -p gitlab/{config,logs,data}
     mkdir -p gitlab-runner/config
 
-    # 2. Criar o arquivo config.toml antes de mudar as permissões
-    if [ ! -f "gitlab-runner/config/config.toml" ]; then
-        echo "Criando arquivo config.toml..."
-        cat >gitlab-runner/config/config.toml <<'EOL'
+    # 2. Criar o arquivo config.toml antes de mudar as permissõess
+    echo "Criando arquivo config.toml..."
+    cat >gitlab-runner/config/config.toml <<'EOL'
 concurrent = 4
 check_interval = 0
 
@@ -39,12 +38,14 @@ check_interval = 0
     volumes = ["/cache"]
     shm_size = 256
 EOL
-    fi
 
     # 3. Ajustar permissões dos diretórios e arquivos
     echo "Ajustando permissões..."
-    sudo chown -R 1000:1000 gitlab gitlab-runner
-    sudo chmod -R 755 gitlab gitlab-runner
+    sudo chown -R 1000:1000 gitlab/
+    sudo chmod -R 755 gitlab/
+
+    sudo chown -R 998:998 gitlab-runner/
+    sudo chmod -R 755 gitlab-runner/
     sudo chmod 644 gitlab-runner/config/config.toml
 
     # 4. Verificar se tudo foi criado corretamente
@@ -60,30 +61,27 @@ EOL
 
 # Função para criar docker-compose do GitLab
 create_gitlab_compose() {
-    if [ ! -f "docker-compose.gitlab.yml" ]; then
-        cat >docker-compose.gitlab.yml <<EOL
+    cat >docker-compose.gitlab.yml <<EOL
 services:
   gitlab:
     image: gitlab/gitlab-ee:latest
     container_name: gitlab
     restart: always
-    hostname: \${GITLAB_HOST}
+    hostname: ${GITLAB_HOST}
     environment:
       GITLAB_OMNIBUS_CONFIG: |
         # Configuração de URL e porta SSH
-        external_url 'http://\${GITLAB_HOST}'
+        external_url 'http://${GITLAB_HOST}'
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
 
         # Configurações de recursos
-        postgresql['shared_buffers'] = "128MB"
-        unicorn['worker_processes'] = 1
-        postgresql['max_worker_processes'] = 2
+        postgresql['shared_buffers'] = "256MB"
+        unicorn['worker_processes'] = 2
+        postgresql['max_worker_processes'] = 4
 
         # Desabilitar serviços não essenciais
-        prometheus['enable'] = false
+        prometheus_monitoring['enable'] = false
         alertmanager['enable'] = false
-        grafana['enable'] = false
-        gitlab_rails['monitoring_enabled'] = false
     ports:
       - '80:80'
       - '443:443'
@@ -99,14 +97,13 @@ services:
 networks:
   gitlab-network:
     name: gitlab-network
+
 EOL
-    fi
 }
 
 # Função para criar docker-compose do Runner
 create_runner_compose() {
-    if [ ! -f "docker-compose.runner.yml" ]; then
-        cat >docker-compose.runner.yml <<EOL
+    cat >docker-compose.runner.yml <<EOL
 services:
   gitlab-runner:
     image: 'gitlab/gitlab-runner:latest'
@@ -117,13 +114,12 @@ services:
       - '/var/run/docker.sock:/var/run/docker.sock'
     networks:
       - gitlab-network
-    privileged: false  # Modificado para reduzir consumo de recursos
+    privileged: true
 
 networks:
   gitlab-network:
     external: true
 EOL
-    fi
 }
 
 # Função para verificar permissões do Docker
@@ -174,6 +170,7 @@ start_gitlab() {
     docker compose -f docker-compose.gitlab.yml up -d
 
     echo "Verifique a URL do GITLAB em http://$GITLAB_HOST"
+   
 }
 
 # Função para iniciar Runner
@@ -242,14 +239,17 @@ show_menu() {
             echo "4. Execute: docker compose -f docker-compose.runner.yml exec gitlab-runner gitlab-runner register"
             ;;
         9) update_runner_token ;;
-        0) exit 0 ;;
-        *) echo -e "${RED}Opção inválida. Tente novamente.${NC}" ;;
+        0)
+            echo "Saindo..."
+            exit 0
+            ;;
+        *) echo -e "${RED}Opção inválida${NC}" ;;
         esac
     done
 }
 
-# Verificar permissões do Docker antes de prosseguir
+# Verifica permissões do Docker antes de começar
 check_docker_permissions
 
-# Mostrar menu
+# Inicia o menu
 show_menu
