@@ -1,10 +1,25 @@
-#!/bin/bash
-
 # Cores para output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
+
+# Função para verificar dependências
+check_dependencies() {
+    echo "Verificando dependências..."
+
+    if ! command -v docker &>/dev/null; then
+        echo -e "${RED}Docker não está instalado. Por favor, instale o Docker antes de continuar.${NC}"
+        exit 1
+    fi
+
+    if ! command -v docker-compose &>/dev/null && ! docker compose version &>/dev/null; then
+        echo -e "${RED}Docker Compose não está instalado. Por favor, instale o Docker Compose antes de continuar.${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}Todas dependências verificadas com sucesso.${NC}"
+}
 
 # Função para criar diretórios com permissões corretas
 setup_directories() {
@@ -14,7 +29,7 @@ setup_directories() {
     mkdir -p gitlab/{config,logs,data}
     mkdir -p gitlab-runner/config
 
-    # 2. Criar o arquivo config.toml antes de mudar as permissõess
+    # 2. Criar o arquivo config.toml antes de mudar as permissões
     echo "Criando arquivo config.toml..."
     cat >gitlab-runner/config/config.toml <<'EOL'
 concurrent = 4
@@ -31,7 +46,7 @@ check_interval = 0
   [runners.docker]
     tls_verify = false
     image = "ubuntu:latest"
-    privileged = true
+    privileged = false
     disable_entrypoint_overwrite = false
     oom_kill_disable = false
     disable_cache = false
@@ -41,12 +56,12 @@ EOL
 
     # 3. Ajustar permissões dos diretórios e arquivos
     echo "Ajustando permissões..."
-    sudo chown -R 1000:1000 gitlab/
-    sudo chmod -R 755 gitlab/
+    chown -R 1000:1000 gitlab/
+    chmod -R 755 gitlab/
 
-    sudo chown -R 998:998 gitlab-runner/
-    sudo chmod -R 755 gitlab-runner/
-    sudo chmod 644 gitlab-runner/config/config.toml
+    chown -R 998:998 gitlab-runner/
+    chmod -R 755 gitlab-runner/
+    chmod 644 gitlab-runner/config/config.toml
 
     # 4. Verificar se tudo foi criado corretamente
     echo "Verificando criação dos arquivos..."
@@ -62,6 +77,8 @@ EOL
 # Função para criar docker-compose do GitLab
 create_gitlab_compose() {
     cat >docker-compose.gitlab.yml <<EOL
+version: '3.6'
+
 services:
   gitlab:
     image: gitlab/gitlab-ee:latest
@@ -70,18 +87,25 @@ services:
     hostname: ${GITLAB_HOST}
     environment:
       GITLAB_OMNIBUS_CONFIG: |
-        # Configuração de URL e porta SSH
         external_url 'http://${GITLAB_HOST}'
         gitlab_rails['gitlab_shell_ssh_port'] = 2222
-
-        # Configurações de recursos
-        postgresql['shared_buffers'] = "256MB"
-        unicorn['worker_processes'] = 2
-        postgresql['max_worker_processes'] = 4
-
-        # Desabilitar serviços não essenciais
+        puma['worker_processes'] = 1
+        puma['min_threads'] = 2
+        puma['max_threads'] = 4
+        postgresql['shared_buffers'] = "128MB"
+        postgresql['max_worker_processes'] = 2
+        sidekiq['concurrency'] = 5
         prometheus_monitoring['enable'] = false
         alertmanager['enable'] = false
+        node_exporter['enable'] = false
+        redis_exporter['enable'] = false
+        postgres_exporter['enable'] = false
+        gitlab_exporter['enable'] = false
+        grafana['enable'] = false
+        mattermost['enable'] = false
+        registry['enable'] = false
+        pages['enable'] = false
+        gitlab_kas['enable'] = false
     ports:
       - '80:80'
       - '443:443'
@@ -90,20 +114,21 @@ services:
       - './gitlab/config:/etc/gitlab'
       - './gitlab/logs:/var/log/gitlab'
       - './gitlab/data:/var/opt/gitlab'
-    shm_size: '256m'
+    shm_size: '128m'
     networks:
       - gitlab-network
 
 networks:
   gitlab-network:
     name: gitlab-network
-
 EOL
 }
 
 # Função para criar docker-compose do Runner
 create_runner_compose() {
     cat >docker-compose.runner.yml <<EOL
+version: '3.6'
+
 services:
   gitlab-runner:
     image: 'gitlab/gitlab-runner:latest'
@@ -114,7 +139,6 @@ services:
       - '/var/run/docker.sock:/var/run/docker.sock'
     networks:
       - gitlab-network
-    privileged: true
 
 networks:
   gitlab-network:
@@ -122,55 +146,65 @@ networks:
 EOL
 }
 
-# Função para verificar permissões do Docker
-check_docker_permissions() {
-    if ! docker ps >/dev/null 2>&1; then
-        echo -e "${RED}O usuário atual não tem permissão para acessar o Docker. Tentando corrigir...${NC}"
-        sudo usermod -aG docker "$(whoami)"
-        echo "Reinicie sua sessão e execute o script novamente."
-        exit 1
-    fi
-}
-
 # Função para configurar GITLAB_HOST
 set_gitlab_host() {
-    read -rp "Digite o hostname ou IP do GitLab: " gitlab_host
-    export GITLAB_HOST="$gitlab_host"
-    echo "export GITLAB_HOST=$gitlab_host" >>~/.bashrc
-    echo -e "${GREEN}GITLAB_HOST configurado como: $gitlab_host${NC}"
+    while true; do
+        read -rp "Digite o hostname ou IP do GitLab: " gitlab_host
+        if [[ -n "$gitlab_host" ]]; then
+            export GITLAB_HOST="$gitlab_host"
+            echo "export GITLAB_HOST=$gitlab_host" >>~/.bashrc
+            echo -e "${GREEN}GITLAB_HOST configurado como: $gitlab_host${NC}"
+            break
+        else
+            echo -e "${RED}Hostname ou IP não pode ser vazio. Tente novamente.${NC}"
+        fi
+    done
 }
 
 # Função para configurar DOCKER_USER
 set_docker_user() {
-    read -rp "Digite seu usuário do DockerHub: " docker_user
-    export DOCKER_USER="$docker_user"
-    echo "export DOCKER_USER=$docker_user" >>~/.bashrc
-    echo -e "${GREEN}DOCKER_USER configurado como: $docker_user${NC}"
+    while true; do
+        read -rp "Digite seu usuário do DockerHub: " docker_user
+        if [[ -n "$docker_user" ]]; then
+            export DOCKER_USER="$docker_user"
+            echo "export DOCKER_USER=$docker_user" >>~/.bashrc
+            echo -e "${GREEN}DOCKER_USER configurado como: $docker_user${NC}"
+            break
+        else
+            echo -e "${RED}Usuário do DockerHub não pode ser vazio. Tente novamente.${NC}"
+        fi
+    done
 }
 
 # Função para atualizar token do runner
 update_runner_token() {
-    read -rp "Digite o token do runner: " runner_token
-    if [ -f "gitlab-runner/config/config.toml" ]; then
-        sudo sed -i "s/__RUNNER_TOKEN__/$runner_token/" gitlab-runner/config/config.toml
-        echo -e "${GREEN}Token do runner atualizado com sucesso${NC}"
-    else
-        echo -e "${RED}Arquivo config.toml não encontrado${NC}"
-    fi
+    while true; do
+        read -rp "Digite o token do runner: " runner_token
+        if [[ -n "$runner_token" ]]; then
+            if [ -f "gitlab-runner/config/config.toml" ]; then
+                sed -i "s/__RUNNER_TOKEN__/$runner_token/" gitlab-runner/config/config.toml
+                echo -e "${GREEN}Token do runner atualizado com sucesso${NC}"
+                break
+            else
+                echo -e "${RED}Arquivo config.toml não encontrado${NC}"
+                break
+            fi
+        else
+            echo -e "${RED}Token não pode ser vazio. Tente novamente.${NC}"
+        fi
+    done
 }
 
 # Função para iniciar GitLab
 start_gitlab() {
-    if [ -z "$DOCKER_USER" ] || [ -z "$GITLAB_HOST" ]; then
-        echo -e "${RED}Variáveis de ambiente não configuradas. Configure-as primeiro.${NC}"
+    if [ -z "$GITLAB_HOST" ]; then
+        echo -e "${RED}GITLAB_HOST não configurado. Configure-o primeiro.${NC}"
         return 1
     fi
 
     echo "Iniciando GitLab..."
     docker compose -f docker-compose.gitlab.yml up -d
-
-    echo "Verifique a URL do GITLAB em http://$GITLAB_HOST"
-   
+    echo "Verifique a URL do GitLab em http://$GITLAB_HOST"
 }
 
 # Função para iniciar Runner
@@ -189,7 +223,7 @@ start_runner() {
 show_root_password() {
     if [ -f "gitlab/config/initial_root_password" ]; then
         echo -e "${YELLOW}Senha inicial do root:${NC}"
-        sudo cat gitlab/config/initial_root_password
+        cat gitlab/config/initial_root_password
     else
         echo -e "${RED}Arquivo de senha não encontrado.${NC}"
     fi
@@ -248,8 +282,8 @@ show_menu() {
     done
 }
 
-# Verifica permissões do Docker antes de começar
-check_docker_permissions
+# Verifica dependências antes de começar
+check_dependencies
 
 # Inicia o menu
 show_menu
