@@ -56,12 +56,12 @@ EOL
 
     # 3. Ajustar permissões dos diretórios e arquivos
     echo "Ajustando permissões..."
-    chown -R 1000:1000 gitlab/
-    chmod -R 755 gitlab/
+    sudo chown -R 1000:1000 gitlab/
+    sudo chmod -R 755 gitlab/
 
-    chown -R 998:998 gitlab-runner/
-    chmod -R 755 gitlab-runner/
-    chmod 644 gitlab-runner/config/config.toml
+    sudo chown -R 998:998 gitlab-runner/
+    sudo chmod -R 755 gitlab-runner/
+    sudo chmod 644 gitlab-runner/config/config.toml
 
     # 4. Verificar se tudo foi criado corretamente
     echo "Verificando criação dos arquivos..."
