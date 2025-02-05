@@ -101,10 +101,8 @@ services:
         redis_exporter['enable'] = false
         postgres_exporter['enable'] = false
         gitlab_exporter['enable'] = false
-        grafana['enable'] = false
         mattermost['enable'] = false
         registry['enable'] = false
-        pages['enable'] = false
         gitlab_kas['enable'] = false
     ports:
       - '80:80'
