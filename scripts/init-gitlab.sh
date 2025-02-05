@@ -138,6 +138,7 @@ services:
     image: 'gitlab/gitlab-runner:latest'
     container_name: gitlab-runner
     restart: always
+    privileged: true  # Necessário para Docker-in-Docker
     volumes:
       - './gitlab-runner/config:/etc/gitlab-runner'
       - '/var/run/docker.sock:/var/run/docker.sock'
